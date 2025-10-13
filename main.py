@@ -41,30 +41,49 @@ async def ping(interaction: discord.Interaction):
 # Play music
 @bot.tree.command(name="play", description="Play a song from YouTube")
 async def play(interaction: discord.Interaction, url: str):
+    # Defer response to allow time for processing
+    await interaction.response.defer()
+
     # Check if user is in a voice channel
     if not interaction.user.voice or not interaction.user.voice.channel:
-        await interaction.response.send_message("You need to be connected to a voice channel to play music.", ephemeral=True)
+        await interaction.followup.send("You need to be connected to a voice channel to play music.", ephemeral=True)
         return
     
-    # Connect to voice channel
-    vc = await interaction.user.voice.channel.connect()
+    # Connect or move to voice channel
+    user_channel = interaction.user.voice.channel
+    vc = interaction.guild.voice_client
+    if vc:
+        if vc.channel != user_channel:
+            await vc.move_to(user_channel)
+    else:
+        vc = await user_channel.connect()
+
+    # Stop current audio if playing
+    if vc.is_playing():
+        vc.stop()
     
-    # Define after function to disconnect after playing
+    # Get audio source
+    source = get_audio_source(url)
+    if not source:
+        await interaction.followup.send("Could not retrieve audio from the provided URL.", ephemeral=True)
+        return
+
+    # Disconnect after idle timeout
+    async def disconnect_after_idle(vc, delay=60):
+        await asyncio.sleep(delay) 
+        if vc.is_connected() and not vc.is_playing():
+            await vc.disconnect()
+            print("Disconnected due to inactivity.")
+
+    # Disconnect after playing
     def after_playing(error):
         if error:
             print(f"Error playing audio: {error}")
-        coro = vc.disconnect()
-        fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
-        try:
-            fut.result()
-        except Exception as e:
-            print(f"Error disconnecting: {e}")
+        asyncio.run_coroutine_threadsafe(disconnect_after_idle(vc), bot.loop)
 
     # Play audio
-    await interaction.response.send_message(f"Playing: {url}")
-    vc.play(get_audio_source(url), after=after_playing)
-
-    
+    await interaction.followup.send(f"Playing: {url}")
+    vc.play(source, after=after_playing)
 
 # Sync commands with Discord (needed once after startup)
 @bot.event
