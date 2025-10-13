@@ -85,6 +85,17 @@ async def play(interaction: discord.Interaction, url: str):
     await interaction.followup.send(f"Playing: {url}")
     vc.play(source, after=after_playing)
 
+# Stop music
+@bot.tree.command(name="stop", description="Stop the music and disconnect")
+async def stop(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc and vc.is_connected():
+        vc.stop()
+        await vc.disconnect()
+        await interaction.response.send_message("Stopped the music and disconnected.")
+    else:
+        await interaction.response.send_message("I'm not connected to a voice channel.", ephemeral=True)
+
 # Sync commands with Discord (needed once after startup)
 @bot.event
 async def setup_hook():
