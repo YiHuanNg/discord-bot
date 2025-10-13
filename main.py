@@ -49,9 +49,20 @@ async def play(interaction: discord.Interaction, url: str):
     # Connect to voice channel
     vc = await interaction.user.voice.channel.connect()
     
+    # Define after function to disconnect after playing
+    def after_playing(error):
+        if error:
+            print(f"Error playing audio: {error}")
+        coro = vc.disconnect()
+        fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
+        try:
+            fut.result()
+        except Exception as e:
+            print(f"Error disconnecting: {e}")
+
+    # Play audio
     await interaction.response.send_message(f"Playing: {url}")
-    source = get_audio_source(url)
-    vc.play(source)
+    vc.play(get_audio_source(url), after=after_playing)
 
     
 
