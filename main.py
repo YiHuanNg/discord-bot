@@ -41,6 +41,12 @@ async def ping(interaction: discord.Interaction):
 # Play music
 @bot.tree.command(name="play", description="Play a song from YouTube")
 async def play(interaction: discord.Interaction, url: str):
+    # Check if user is in a voice channel
+    if not interaction.user.voice or not interaction.user.voice.channel:
+        await interaction.response.send_message("You need to be connected to a voice channel to play music.", ephemeral=True)
+        return
+    
+    # Connect to voice channel
     vc = await interaction.user.voice.channel.connect()
     
     await interaction.response.send_message(f"Playing: {url}")
