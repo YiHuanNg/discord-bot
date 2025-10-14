@@ -21,13 +21,45 @@ intents.members = True
 # Use commands.Bot for slash commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Music queue
+queues = {}
+
+# Function to get audio source from YouTube URL
 def get_audio_source(url):
     info = yt_dlp.YoutubeDL({'format': 'bestaudio', 'noplaylist': 'True'}).extract_info(url, download=False)
     audio_url = info['url']
     return discord.FFmpegPCMAudio(audio_url)
 
+# Function to play next in queue
+async def play_next(interaction, vc):
+    guild_id = interaction.guild.id
 
+    # If queue is empty, disconnect after timeout
+    if guild_id not in queues or not queues[guild_id]:
+        async def disconnect_after_idle(vc, delay=60):
+            await asyncio.sleep(delay) 
+            if vc.is_connected() and not vc.is_playing():
+                await vc.disconnect()
+                print("Disconnected due to inactivity.")
+        asyncio.create_task(disconnect_after_idle(vc))
+        return
 
+    # Play next in queue
+    url, source = queues[guild_id].pop(0)
+
+    # Announce now playing
+    channel = interaction.channel or (vc.channel if vc and vc.channel else None)
+    if channel:
+        await channel.send(f"Now playing: {url}")
+    
+    def after_playing(error):
+        if error:
+            print(f"Error playing next: {error}")
+        asyncio.run_coroutine_threadsafe(play_next(interaction, vc), bot.loop)
+
+    vc.play(source, after=after_playing)
+
+# SLASH COMMANDS
 # Slash command test
 @bot.tree.command(name="hello", description="Say hello to the bot")
 async def hello(interaction: discord.Interaction):
@@ -57,10 +89,6 @@ async def play(interaction: discord.Interaction, url: str):
             await vc.move_to(user_channel)
     else:
         vc = await user_channel.connect()
-
-    # Stop current audio if playing
-    if vc.is_playing():
-        vc.stop()
     
     # Get audio source
     source = get_audio_source(url)
@@ -68,22 +96,25 @@ async def play(interaction: discord.Interaction, url: str):
         await interaction.followup.send("Could not retrieve audio from the provided URL.", ephemeral=True)
         return
 
-    # Disconnect after idle timeout
-    async def disconnect_after_idle(vc, delay=60):
-        await asyncio.sleep(delay) 
-        if vc.is_connected() and not vc.is_playing():
-            await vc.disconnect()
-            print("Disconnected due to inactivity.")
+    # Initialize queue for guild if not exists
+    guild_id = interaction.guild.id
+    if guild_id not in queues:
+        queues[guild_id] = []
 
-    # Disconnect after playing
-    def after_playing(error):
-        if error:
-            print(f"Error playing audio: {error}")
-        asyncio.run_coroutine_threadsafe(disconnect_after_idle(vc), bot.loop)
+    # If already playing, add to queue
+    if vc.is_playing():
+        queues[guild_id].append((url, source))
+        await interaction.followup.send(f"Added to queue: {url}")
+    else:
+        # Else, play immediately
+        await interaction.followup.send(f"Playing: {url}")
 
-    # Play audio
-    await interaction.followup.send(f"Playing: {url}")
-    vc.play(source, after=after_playing)
+        def after_playing(error):
+            if error:
+                print(f"Error playing audio: {error}")
+            asyncio.run_coroutine_threadsafe(play_next(interaction, vc), bot.loop)
+
+        vc.play(source, after=after_playing)
 
 # Stop music
 @bot.tree.command(name="stop", description="Stop the music and disconnect")
