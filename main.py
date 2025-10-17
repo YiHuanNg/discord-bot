@@ -46,7 +46,8 @@ async def play_next(interaction, vc):
         return
 
     # Play next in queue
-    url, source = queues[guild_id].pop(0)
+    url, title, source = queues[guild_id].pop(0)
+    vc.current_title = title  # Store title for now playing
 
     # Announce now playing
     channel = interaction.channel or (vc.channel if vc and vc.channel else None)
@@ -104,7 +105,7 @@ async def play(interaction: discord.Interaction, url: str):
 
     # If already playing, add to queue
     if vc.is_playing():
-        queues[guild_id].append((title, source))
+        queues[guild_id].append((url, title, source))
         await interaction.followup.send(f"Added to queue: {url}")
     else:
         # Else, play immediately
@@ -116,6 +117,7 @@ async def play(interaction: discord.Interaction, url: str):
             asyncio.run_coroutine_threadsafe(play_next(interaction, vc), bot.loop)
 
         vc.play(source, after=after_playing)
+        vc.current_title = title  # Store title for now playing
 
 # Stop music
 @bot.tree.command(name="stop", description="Stop the music and disconnect")
@@ -140,16 +142,26 @@ async def stop(interaction: discord.Interaction):
 @bot.tree.command(name="queue", description="Show the current music queue")
 async def queue(interaction: discord.Interaction):
     guild_id = interaction.guild.id
+    vc = interaction.guild.voice_client
 
-    # Check if queue is empty
-    if guild_id not in queues or len(queues[guild_id]) == 0:
-        await interaction.response.send_message("The queue is empty.", ephemeral=True)
-        return
-    
+    # Build now playing message
+    current_song_msg = ""
+    if vc and hasattr(vc, 'current_title'):
+        current_song_msg = f"Now Playing: {vc.current_title}\n"
+
     # Build queue message
-    queue_list = "\n".join([f"{idx + 1}. {item[0]}" for idx, item in enumerate(queues[guild_id])])
-    await interaction.response.send_message(f"Current Queue:\n{queue_list}")
-    
+    queue_msg = ""
+    if guild_id in queues and len(queues[guild_id]) > 0:
+        queue_list = "\n".join([f"{idx + 1}. {item[1]}" for idx, item in enumerate(queues[guild_id])])
+        queue_msg = f"Up Next:\n{queue_list}"
+
+    # If nothing is playing and queue is empty
+    if not current_song_msg and not queue_msg:
+        await interaction.response.send_message("Nothing is playing, and the queue is empty.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(current_song_msg + queue_msg)
+
 # Skip current song
 @bot.tree.command(name="skip", description="Skip the current song")
 async def skip(interaction: discord.Interaction):
