@@ -28,7 +28,8 @@ queues = {}
 def get_audio_source(url):
     info = yt_dlp.YoutubeDL({'format': 'bestaudio', 'noplaylist': 'True'}).extract_info(url, download=False)
     audio_url = info['url']
-    return discord.FFmpegPCMAudio(audio_url)
+    title = info.get('title', url)
+    return discord.FFmpegPCMAudio(audio_url), title
 
 # Function to play next in queue
 async def play_next(interaction, vc):
@@ -91,7 +92,7 @@ async def play(interaction: discord.Interaction, url: str):
         vc = await user_channel.connect()
     
     # Get audio source
-    source = get_audio_source(url)
+    source, title = get_audio_source(url)
     if not source:
         await interaction.followup.send("Could not retrieve audio from the provided URL.", ephemeral=True)
         return
@@ -103,7 +104,7 @@ async def play(interaction: discord.Interaction, url: str):
 
     # If already playing, add to queue
     if vc.is_playing():
-        queues[guild_id].append((url, source))
+        queues[guild_id].append((title, source))
         await interaction.followup.send(f"Added to queue: {url}")
     else:
         # Else, play immediately
@@ -120,12 +121,50 @@ async def play(interaction: discord.Interaction, url: str):
 @bot.tree.command(name="stop", description="Stop the music and disconnect")
 async def stop(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
+    guild_id = interaction.guild.id
+
+    # Stop and clear queue if connected
     if vc and vc.is_connected():
         vc.stop()
+
+        if guild_id in queues:
+            queues[guild_id].clear()
+
         await vc.disconnect()
         await interaction.response.send_message("Stopped the music and disconnected.")
     else:
+        # Not connected
         await interaction.response.send_message("I'm not connected to a voice channel.", ephemeral=True)
+
+# Show queue
+@bot.tree.command(name="queue", description="Show the current music queue")
+async def queue(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+
+    # Check if queue is empty
+    if guild_id not in queues or len(queues[guild_id]) == 0:
+        await interaction.response.send_message("The queue is empty.", ephemeral=True)
+        return
+    
+    # Build queue message
+    queue_list = "\n".join([f"{idx + 1}. {item[0]}" for idx, item in enumerate(queues[guild_id])])
+    await interaction.response.send_message(f"Current Queue:\n{queue_list}")
+    
+# Skip current song
+@bot.tree.command(name="skip", description="Skip the current song")
+async def skip(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+
+    # Check if connected and playing
+    if vc and vc.is_connected():
+        if vc.is_playing():
+            vc.stop()
+            await interaction.response.send_message("Skipped the current song.")
+        else:
+            await interaction.response.send_message("No song is currently playing.", ephemeral=True)
+    else:
+        await interaction.response.send_message("I am not connected to a voice channel.", ephemeral=True)
+
 
 # Sync commands with Discord (needed once after startup)
 @bot.event
