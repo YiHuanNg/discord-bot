@@ -21,9 +21,10 @@ intents.members = True
 # Use commands.Bot for slash commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Music queue and locks
-queues = {}
-play_locks = {} 
+# Global variables
+queues = {}         # Dictionary to hold queues per guild
+play_locks = {}     # Dictionary to hold locks per guild
+
 
 # Function to get audio source from YouTube URL
 def get_audio_source_sync(url):
@@ -57,10 +58,11 @@ async def play_next(interaction, vc):
             asyncio.create_task(disconnect_after_idle(vc))
             return
 
-    # Play next in queue
-    url, title, source = queues[guild_id].pop(0)
+    # Gext next song in queue
+    url, title = queues[guild_id].pop(0)
+    source, _ = await get_audio_source(url)
     vc.current_title = title  # Store title for now playing
-
+    
     # Announce now playing
     channel = interaction.channel or (vc.channel if vc and vc.channel else None)
     if channel:
@@ -120,7 +122,7 @@ async def play(interaction: discord.Interaction, url: str):
     # If already playing, add to queue
     async with play_locks[guild_id]:
         if vc.is_playing():
-            queues[guild_id].append((url, title, source))
+            queues[guild_id].append((url, title))
             await interaction.followup.send(f"Added to queue: {url}")
         else:
             # Else, play immediately
