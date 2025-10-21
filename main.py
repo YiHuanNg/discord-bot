@@ -21,29 +21,41 @@ intents.members = True
 # Use commands.Bot for slash commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Music queue
+# Music queue and locks
 queues = {}
+play_locks = {} 
 
 # Function to get audio source from YouTube URL
-def get_audio_source(url):
+def get_audio_source_sync(url):
     info = yt_dlp.YoutubeDL({'format': 'bestaudio', 'noplaylist': 'True'}).extract_info(url, download=False)
     audio_url = info['url']
     title = info.get('title', url)
+    return audio_url, title
+
+# Async wrapper for get_audio_source
+async def get_audio_source(url):
+    loop = asyncio.get_event_loop()
+    audio_url, title = await loop.run_in_executor(None, get_audio_source_sync, url)
     return discord.FFmpegPCMAudio(audio_url), title
 
 # Function to play next in queue
 async def play_next(interaction, vc):
     guild_id = interaction.guild.id
 
+    # Acquire lock to prevent race conditions
+    if guild_id not in play_locks:
+        play_locks[guild_id] = asyncio.Lock()
+
     # If queue is empty, disconnect after timeout
-    if guild_id not in queues or not queues[guild_id]:
-        async def disconnect_after_idle(vc, delay=60):
-            await asyncio.sleep(delay) 
-            if vc.is_connected() and not vc.is_playing():
-                await vc.disconnect()
-                print("Disconnected due to inactivity.")
-        asyncio.create_task(disconnect_after_idle(vc))
-        return
+    async with play_locks[guild_id]:
+        if guild_id not in queues or not queues[guild_id]:
+            async def disconnect_after_idle(vc, delay=60):
+                await asyncio.sleep(delay) 
+                if vc.is_connected() and not vc.is_playing():
+                    await vc.disconnect()
+                    print("Disconnected due to inactivity.")
+            asyncio.create_task(disconnect_after_idle(vc))
+            return
 
     # Play next in queue
     url, title, source = queues[guild_id].pop(0)
@@ -93,31 +105,34 @@ async def play(interaction: discord.Interaction, url: str):
         vc = await user_channel.connect()
     
     # Get audio source
-    source, title = get_audio_source(url)
+    source, title = await get_audio_source(url)
     if not source:
         await interaction.followup.send("Could not retrieve audio from the provided URL.", ephemeral=True)
         return
 
-    # Initialize queue for guild if not exists
+    # Initialize queue and lock for guild if not exists
     guild_id = interaction.guild.id
     if guild_id not in queues:
         queues[guild_id] = []
+    if guild_id not in play_locks:
+        play_locks[guild_id] = asyncio.Lock()
 
     # If already playing, add to queue
-    if vc.is_playing():
-        queues[guild_id].append((url, title, source))
-        await interaction.followup.send(f"Added to queue: {url}")
-    else:
-        # Else, play immediately
-        await interaction.followup.send(f"Playing: {url}")
+    async with play_locks[guild_id]:
+        if vc.is_playing():
+            queues[guild_id].append((url, title, source))
+            await interaction.followup.send(f"Added to queue: {url}")
+        else:
+            # Else, play immediately
+            await interaction.followup.send(f"Playing: {url}")
 
-        def after_playing(error):
-            if error:
-                print(f"Error playing audio: {error}")
-            asyncio.run_coroutine_threadsafe(play_next(interaction, vc), bot.loop)
+            def after_playing(error):
+                if error:
+                    print(f"Error playing audio: {error}")
+                asyncio.run_coroutine_threadsafe(play_next(interaction, vc), bot.loop)
 
-        vc.play(source, after=after_playing)
-        vc.current_title = title  # Store title for now playing
+            vc.play(source, after=after_playing)
+            vc.current_title = title  # Store title for now playing
 
 # Stop music
 @bot.tree.command(name="stop", description="Stop the music and disconnect")
